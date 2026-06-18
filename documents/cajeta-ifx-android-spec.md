@@ -74,3 +74,53 @@ GameActivity + GameTextInput + Paddleboat + Oboe + Swappy.
 - `vkCreateAndroidSurfaceKHR`: https://registry.khronos.org/vulkan/specs/1.3-extensions/man/html/vkCreateAndroidSurfaceKHR.html
 - Paddleboat: https://developer.android.com/games/sdk/game-controller/controller · GameTextInput: https://developer.android.com/games/agdk/add-support-for-text-input
 - AAudio: https://developer.android.com/ndk/guides/audio/aaudio/aaudio · Oboe: https://developer.android.com/games/sdk/oboe/low-latency-audio
+
+---
+
+## Appendix B — Interop mechanism (JNI is a C ABI)
+
+**Feasibility: yes.** JNI is entirely C-ABI, and Cajeta `@Native` both calls and exports C symbols
+(compiled through LLVM → a per-ABI NDK `.so`). No Java *language* support is required in Cajeta.
+
+### Java → native: `RegisterNatives` in `JNI_OnLoad` (preferred)
+Cajeta exports **`jint JNI_OnLoad(JavaVM*, void*)`** (one C symbol). Inside it: `GetEnv` → `FindClass`
+the app classes → `RegisterNatives(clazz, JNINativeMethod[]{name, sig, fnptr})` binding
+**Cajeta-compiled functions** to Java `native` methods. Preferred over the `Java_pkg_Class_method`
+name-mangling path: export only `JNI_OnLoad`, hand ART raw function pointers, fail fast at load.
+Do all `FindClass` here (correct class loader) and cache results as **global refs**.
+
+### Native → Java: the `JNIEnv*` function-pointer table
+`JNIEnv*` is a pointer to a C struct of ~230 function pointers — `FindClass`, `GetMethodID`/
+`GetStaticMethodID`, `NewObject`, `Call*Method`, `Get/SetField`, `NewStringUTF` (modified UTF-8),
+array ops. Every call is an ordinary indirect C call → all `@Native`-reachable. Method signatures
+are JVM descriptors (`(Ljava/lang/String;I)Z`).
+
+### Threading & references (absolute rules)
+`JavaVM` is process-global; **`JNIEnv` is thread-local — never share across threads.** Native render/
+audio threads: `GetEnv` → if `JNI_EDETACHED`, `AttachCurrentThread`; auto-detach via a
+`pthread_key_create` TLS destructor. Manage refs: local refs on attached native threads are **not**
+auto-freed (use `DeleteLocalRef`/`PushLocalFrame`); hold cross-call/thread handles as
+`NewGlobalRef`/`DeleteGlobalRef`; compare with `IsSameObject`, never `==`.
+
+### Build on the GameActivity glue
+`android_native_app_glue` + GameActivity (compiled into the `.so` from AGDK source) give
+`android_main(android_app*)` on a JVM-attached loop thread, already exposing the **`JavaVM`**,
+**`JNIEnv`**, the **GameActivity `jobject`**, and the **`ANativeWindow`**. Hand-written JNI is needed
+only for: **GameTextInput** (soft keyboard show/hide/state), the **`RECORD_AUDIO`** runtime-permission
+prompt (`Activity.requestPermissions` on the `jobject` — no NDK permission API exists), and lifecycle
+dialogs. These map to `ifx`'s permission state + lifecycle events.
+
+### Packaging
+A tiny **Java/Kotlin companion** is unavoidable for GameActivity: a `GameActivity` subclass +
+`static { System.loadLibrary("cajeta_ifx_android"); }` + manifest `android.app.lib_name` + the
+Activity declaration. Build: **Gradle/AGP** is the documented path (GameActivity via a **Prefab AAR**,
+AGP 4.1+); the **no-Gradle minimum** is `aapt2 compile/link → javac/kotlinc + d8 → zip(+ lib/<abi>/
+*.so) → zipalign → apksigner`. The cajeta build tool must drive one of these. Rust's
+`android-activity` + `jni-rs` are the worked precedent for "non-Java language over JNI."
+
+### Sources
+- JNI tips (RegisterNatives, threads, refs): https://developer.android.com/training/articles/perf-jni
+- GameActivity: https://developer.android.com/games/agdk/game-activity · GameTextInput: https://developer.android.com/games/agdk/game-activity/use-text-input
+- JNI spec (functions): https://docs.oracle.com/en/java/javase/17/docs/specs/jni/functions.html
+- android-activity (Rust precedent): https://github.com/rust-mobile/android-activity · jni-rs: https://docs.rs/jni
+- No-Gradle APK: https://hereket.com/posts/android_from_command_line/

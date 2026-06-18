@@ -86,3 +86,34 @@ Android window creation via NDK ANativeWindow / GameActivity, producing the opaq
    **Acceptance Criteria**
    a. [ ] App survives surface destroy/recreate and background/foreground without leaking the
       swapchain; degrades cleanly when MMAP low-latency is unavailable.
+
+---
+
+## Appendix B — Interop implementation (JNI)
+
+### 7. JNI bridge
+   **TDD**
+   a. [ ] `JNI_OnLoad` registers natives via `RegisterNatives`; a Java `native` call reaches Cajeta.
+   b. [ ] A native render thread `AttachCurrentThread`s, calls a Java method via `JNIEnv`, and
+      auto-detaches (TLS destructor); no ref-table leak under CheckJNI.
+
+   **Deliverables**
+   a. [ ] `JNI_OnLoad(JavaVM*)` export; `FindClass` + global-ref cache; `RegisterNatives` table.
+   b. [ ] `@Native` bindings over the `JNIEnv` function-pointer table (FindClass/GetMethodID/
+      Call*Method/string+array ops); `GetEnv`/`AttachCurrentThread` + TLS auto-detach.
+   c. [ ] hand-written JNI for GameTextInput (soft keyboard), `RECORD_AUDIO` permission, lifecycle
+      dialogs → `ifx` permission/lifecycle events.
+
+   **Acceptance Criteria**
+   a. [ ] Native↔Java round-trips work on a JVM-attached and a native thread; refs balanced.
+
+### 8. GameActivity glue + packaging
+   **Deliverables**
+   a. [ ] GameActivity + `android_native_app_glue` (AGDK source) compiled into the `.so`; consume
+      `JavaVM`/`JNIEnv`/Activity `jobject`/`ANativeWindow` from `android_app`.
+   b. [ ] Java/Kotlin companion (GameActivity subclass + `System.loadLibrary` + manifest `lib_name`).
+   c. [ ] build-tool: per-ABI `.so` (`arm64-v8a`, `x86_64`); APK/AAR via Gradle/AGP (Prefab) **or**
+      the manual `aapt2 → d8 → zip → zipalign → apksigner` path.
+
+   **Acceptance Criteria**
+   a. [ ] Installs + runs on device/emulator; surface lifecycle + low-latency audio + gamepad work.
