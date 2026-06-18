@@ -37,3 +37,40 @@ overrides). Umbrella design: the cajeta repo's `documents/cajeta-gfx/cajeta-gfx-
   §9.4 binding model).
 - Contract: `cajeta.ifx` — `Backend` / `WindowBackend` / `AudioBackend` / `InputBackend`.
 - Selector: the `cajeta-ifx-backend` melt (target → backend).
+
+---
+
+## Appendix A — Vendor SDK details (2025-2026 research)
+
+### Binding: C NDK + a JNI airlock
+Rendering, input polling, and audio I/O are pure **NDK C** (direct FFI). But several capabilities
+are Java-only and cross the **JNI boundary**: soft-keyboard text (GameTextInput), the `RECORD_AUDIO`
+runtime permission, and lifecycle dialogs. → This backend ships a small **Java/Kotlin companion +
+JNI glue** alongside the C code. The modern stack is the **Android Game Development Kit (AGDK)**:
+GameActivity + GameTextInput + Paddleboat + Oboe + Swappy.
+
+### SDK reference
+| Domain | Modern (AGDK / NDK) | Legacy | C-ABI? | Min API |
+|---|---|---|---|---|
+| Window | **GameActivity** (SurfaceView, AppCompat-composable) → **`ANativeWindow`** (`<android/native_window.h>`); its `android_native_app_glue` fork → `android_main()`; surface on `APP_CMD_INIT_WINDOW`, gone on `APP_CMD_TERM_WINDOW` | NativeActivity | **C** | GameActivity → 19 |
+| Surface | **`VK_KHR_android_surface`** (`vkCreateAndroidSurfaceKHR`, `ANativeWindow*`); **Swappy** frame pacing (Choreographer) | EGL/GLES | C | Vulkan 24 |
+| Input | **`AInputEvent`** drained via `android_app_swap_input_buffers()`; **Paddleboat** (gamepad + rumble, hot-plug); **GameTextInput** (IME) | `AInputQueue`/`onInputEvent` | C (+JNI for IME text) | — |
+| Audio | **AAudio** (`<aaudio/AAudio.h>`, API 26) / **Oboe** (C++ wrapper, recommended; AAudio on 27+, else OpenSL ES); low-latency = `AAUDIO_SHARING_MODE_EXCLUSIVE` + MMAP (OEM-dependent) | OpenSL ES (deprecated) | C/C++ (+JNI for `RECORD_AUDIO`) | AAudio 26 |
+
+### Capability support & gaps (vs spec §9.7)
+- **Single fullscreen `ANativeWindow`** — no multi-window/positioning/warp (n/a). Touch-first +
+  optional gamepad (Paddleboat). Text via IME (GameTextInput), not raw keys.
+- **Lifecycle-driven loop (no persistent `main()`):** the engine runs off the Activity lifecycle;
+  **the surface can vanish mid-run** (`APP_CMD_TERM_WINDOW`) — GPU swapchain must be released/recreated.
+  This is the canonical case behind `ifx`'s mandatory **surface-lost/recreated** events.
+- **JNI airlock:** soft-keyboard text + `RECORD_AUDIO` permission prompt + lifecycle dialogs are
+  Java → the companion handles them; `ifx`'s permission-state surface wraps the `RECORD_AUDIO` grant.
+- **Fragmented OEM audio latency** — MMAP/EXCLUSIVE not guaranteed; query at runtime, degrade (Oboe's
+  fallback chain). **Explicit frame pacing** (Swappy) is the engine's responsibility.
+- **Floor: API 24 (Vulkan) / 26 (AAudio)**, GameActivity back to 19.
+
+### References
+- GameActivity: https://developer.android.com/games/agdk/game-activity · migrate: https://developer.android.com/games/agdk/game-activity/migrate-native-activity
+- `vkCreateAndroidSurfaceKHR`: https://registry.khronos.org/vulkan/specs/1.3-extensions/man/html/vkCreateAndroidSurfaceKHR.html
+- Paddleboat: https://developer.android.com/games/sdk/game-controller/controller · GameTextInput: https://developer.android.com/games/agdk/add-support-for-text-input
+- AAudio: https://developer.android.com/ndk/guides/audio/aaudio/aaudio · Oboe: https://developer.android.com/games/sdk/oboe/low-latency-audio

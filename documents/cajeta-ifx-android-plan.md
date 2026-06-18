@@ -51,3 +51,38 @@ Android window creation via NDK ANativeWindow / GameActivity, producing the opaq
 - Gated on the stdlib `cajeta.ifx` contract landing (`runtime/src/cajeta/ifx/`).
 - The Surface/WSI hand-off is gated on the gfx swapchain (`cajeta.gpu.gfx`, spec Part GP-1 §4.2).
 - Versioned independently of the other backends (own Android API cadence).
+
+---
+
+## Appendix A — Binding & capability-gap work (from vendor research)
+
+### 5. Binding (C NDK + JNI airlock)
+   **TDD**
+   a. [ ] `ANativeWindow` arrives via the GameActivity glue (`APP_CMD_INIT_WINDOW`); Vulkan surface
+      built with `vkCreateAndroidSurfaceKHR`.
+   b. [ ] JNI round-trip: request `RECORD_AUDIO`; show/hide the IME via GameTextInput.
+
+   **Deliverables**
+   a. [ ] GameActivity integration (+ its `android_native_app_glue` fork → `android_main()`); input
+      drained via `android_app_swap_input_buffers()`; Paddleboat gamepad; Swappy frame pacing.
+   b. [ ] Oboe/AAudio output + capture (low-latency MMAP/EXCLUSIVE requested, graceful fallback).
+   c. [ ] A **Java/Kotlin companion + JNI glue** for soft-keyboard text, `RECORD_AUDIO` permission,
+      and lifecycle dialogs.
+
+   **Acceptance Criteria**
+   a. [ ] Renders to the SurfaceView; gamepad + low-latency audio work; permission flow via JNI.
+
+### 6. Capability gaps & fallbacks (vs spec §9.7)
+   **TDD**
+   a. [ ] `APP_CMD_TERM_WINDOW` mid-run → swapchain released; `INIT_WINDOW` again → recreated
+      (the canonical surface-lost/recreated case).
+
+   **Deliverables**
+   a. [ ] lifecycle-driven loop off the Activity lifecycle; single fullscreen surface; surface
+      vanish/return mapped to `ifx` surface-lost/recreated events.
+   b. [ ] touch floor + optional gamepad via `supports()`; IME text (not raw keys); runtime audio
+      latency query with Oboe fallback chain; mic permission via the contract's permission state.
+
+   **Acceptance Criteria**
+   a. [ ] App survives surface destroy/recreate and background/foreground without leaking the
+      swapchain; degrades cleanly when MMAP low-latency is unavailable.
